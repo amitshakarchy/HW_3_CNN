@@ -140,11 +140,12 @@ def generate_data(file_list, labels, batch_size):
             if i == len(file_list):
                 i = 0
                 # random.shuffle(file_list)
+            labels_batch.append(labels[i])  # b
             image = cv2.imread(file_list[i])
             i += 1
             image = process_image(image)
             image_batch.append(image)
-            labels_batch.append(labels[b])
+
         image_batch = np.stack(image_batch, axis=0)
         batch_targets = tf.keras.utils.to_categorical(labels_batch, N_CLASSES)
         yield image_batch, batch_targets
