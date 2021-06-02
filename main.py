@@ -216,4 +216,5 @@ if __name__ == '__main__':
                         validation_data=generate_data(X_val, y_val, BATCH_SIZE),
                         epochs=EPOCHS,
                         validation_steps=X_val.shape[0] // BATCH_SIZE,
-                        callbacks=[early_stopping])
+                        # TODO: add a callback to calculate predictions on the test set to plot train/val/test over epochs
+                        callbacks=[early_stopping]  )
