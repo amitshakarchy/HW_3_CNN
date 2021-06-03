@@ -1,16 +1,18 @@
 from random import random
 
-from cv2 import cv2
+# from cv2 import cv2
+from keras.layers import BatchNormalization
 from sklearn import metrics
 from sklearn.metrics import confusion_matrix
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Flatten
-# import cv2
+import cv2
 import scipy.io
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
 # from tensorflow.keras.preprocessing import image_dataset_from_directory
-import tensorflow.keras.datasets as tfds
+# import tensorflow.keras.datasets as tfds
+import tensorflow_datasets as tfds
 import os
 import sys
 import glob
@@ -23,6 +25,7 @@ from urllib.request import urlopen
 from shutil import copyfileobj
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.python.keras import Input
+from tensorflow.python.keras.applications.inception_v3 import InceptionV3
 from tensorflow.python.keras.applications.resnet import ResNet50
 from tensorflow.python.keras.applications.vgg16 import VGG16
 from tensorflow.keras import layers
@@ -31,7 +34,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from tensorflow.python.keras.callbacks import Callback
 from tensorboard.plugins.hparams import api as hp
-from tensorflow.python.keras.layers import Dropout
+from tensorflow.python.keras.layers import Dropout, GlobalAveragePooling2D
 
 labels_names = ['pink primrose', 'hard-leaved pocket orchid', 'canterbury bells', 'sweet pea', 'english marigold',
                 'tiger lily', 'moon orchid', 'bird of paradise', 'monkshood', 'globe thistle', 'snapdragon',
@@ -84,11 +87,11 @@ def download_data():
 
 def load_data(random_split=True):
     # Read .mat file containing image labels.
-    image_labels = loadmat('HW_3_CNN/data/imagelabels.mat')['labels'][0]
+    image_labels = loadmat('data/imagelabels.mat')['labels'][0]
     # Subtract one to get 0-based labels
     image_labels -= 1
 
-    all_files = sorted(glob.glob('HW_3_CNN/data/jpg/*.jpg'))
+    all_files = sorted(glob.glob('data/jpg/*.jpg'))
     # fix path's backslashes
     for ind, file in enumerate(all_files):
         all_files[ind] = file.replace('\\', '/')
@@ -104,7 +107,7 @@ def load_data(random_split=True):
 
     else:
         # Read .mat file containing training, testing, and validation sets.
-        setid = loadmat('HW_3_CNN/data/setid.mat')
+        setid = loadmat('data/setid.mat')
 
         # The .mat file is 1-indexed, so we subtract one to get 0-based labels
         idx_train = setid['trnid'][0] - 1
@@ -128,6 +131,45 @@ def load_data(random_split=True):
         X_test, y_test = labels[idx_test, :][:, 0], labels[idx_test, :][:, 1]
 
     return X_train, y_train, X_val, y_val, X_test, y_test
+
+
+def data():
+    dataset, dataset_info = tfds.load('oxford_flowers102', with_info=True, as_supervised=True)
+
+    # Create a training set, a validation set and a test set.
+    test_set, training_set, validation_set = dataset['test'], dataset['train'], dataset['validation']
+    num_training_examples = 0
+    num_validation_examples = 0
+    num_test_examples = 0
+
+    for example in training_set:
+        num_training_examples += 1
+
+    for example in validation_set:
+        num_validation_examples += 1
+
+    for example in test_set:
+        num_test_examples += 1
+
+    print('Total Number of Training Images: {}'.format(num_training_examples))
+    print('Total Number of Validation Images: {}'.format(num_validation_examples))
+    print('Total Number of Test Images: {} \n'.format(num_test_examples))
+    # Get the number of classes in the dataset from the dataset info.
+    num_classes = dataset_info.features['label'].num_classes
+    print('Total Number of Classes: {}'.format(num_classes))
+
+    def format_image(image, label):
+        image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE)) / 255.0
+        return image, label
+
+    train_batches = training_set.cache().shuffle(num_training_examples // 4).map(format_image).batch(
+        BATCH_SIZE).prefetch(1)
+
+    validation_batches = validation_set.cache().map(format_image).batch(BATCH_SIZE).prefetch(1)
+
+    test_batches = test_set.cache().map(format_image).batch(BATCH_SIZE).prefetch(1)
+
+    return train_batches, validation_batches, test_batches
 
 
 def process_image(img):
@@ -207,6 +249,7 @@ def get_vgg_adapted(hparams):
     # define new model
     model = Model(inputs=feature_extractor.inputs, outputs=output)
     # summarize
+    model.build()
     model.summary()
     return model
 
@@ -234,6 +277,7 @@ def get_mobilenet_v2_adapted(hparams):
     feature_extractor = hub.KerasLayer(URL, input_shape=(IMG_SIZE, IMG_SIZE, 3))
     # Freeze the Pre-Trained Model
     feature_extractor.trainable = False
+
     # Attach a classification head
     model = tf.keras.Sequential([
         feature_extractor,
@@ -241,6 +285,22 @@ def get_mobilenet_v2_adapted(hparams):
         Dropout(hparams[HP_DROPOUT]),
         layers.Dense(N_CLASSES, activation='softmax')
     ])
+
+    return model
+
+
+def get_inceptionv3_adapted(hparams):
+    input_tensor = Input(shape=(IMG_SIZE, IMG_SIZE, 3))
+    base_model = InceptionV3(include_top=False,
+                             weights='imagenet',
+                             input_shape=(IMG_SIZE, IMG_SIZE, 3))
+    bn = BatchNormalization()(input_tensor)
+    x = base_model(bn)
+    x = GlobalAveragePooling2D()(x)
+    x = Dense(hparams[HP_NUM_UNITS], activation='relu')(x)
+    x = Dropout(hparams[HP_DROPOUT])(x)
+    output = Dense(N_CLASSES, activation='softmax')(x)
+    model = Model(input_tensor, output)
     return model
 
 
@@ -275,9 +335,9 @@ def plot(name_model, history, history_test, session_num):
     plt.plot(epochs_range, history_test['test_loss'], label='Test Loss')
     plt.legend(loc='upper right')
     plt.title('Training and Validation Loss')
-    if not os.path.exists('HW_3_CNN/data/' + name_model):
-        os.mkdir('HW_3_CNN/data/' + name_model)
-    plt.savefig('HW_3_CNN/data/' + name_model + '/' + str(session_num) + '.png')
+    if not os.path.exists('data/' + name_model):
+        os.mkdir('data/' + name_model)
+    plt.savefig('data/' + name_model + '/' + str(session_num) + '.png')
 
     plt.show()
 
@@ -285,17 +345,18 @@ def plot(name_model, history, history_test, session_num):
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     print("Let's go!")
-    download_data()
+    # download_data()
+
     # we will crop and resize input images to IMG_SIZE x IMG_SIZE
     N_CLASSES = 102
     IMG_SIZE = 224
     BATCH_SIZE = 32
     # TODO: change for experiments
     SEED = 42
-    EPOCHS = 100
-    run_model = 'feature_vector'
-    normalization = True
-    crop = False
+    EPOCHS = 2
+    run_model = 'inceptionv3'
+    normalization = False
+    crop = True
 
     HP_NUM_UNITS = hp.HParam('num_units', hp.Discrete([128, 256, 1024]))
     HP_DROPOUT = hp.HParam('dropout', hp.Discrete([0.0, 0.3]))
@@ -304,8 +365,10 @@ if __name__ == '__main__':
     INPUT_SHAPE = Input(shape=(IMG_SIZE, IMG_SIZE, 3))
 
     X_train, y_train, X_val, y_val, X_test, y_test = load_data(random_split=True)
-
+    #
     X_test, y_test = test_generate(X_test, y_test)
+
+    # train_batches, validation_batches, test_batches = data()
     session_num = 0
 
     for num_units in HP_NUM_UNITS.domain.values:
@@ -320,6 +383,8 @@ if __name__ == '__main__':
                     model = get_vgg_adapted(hparams)
                 elif run_model == 'feature_vector':
                     model = get_mobilenet_v2_adapted(hparams)
+                elif run_model == 'inceptionv3':
+                    model = get_inceptionv3_adapted(hparams)
                 else:  # 'resnet'
                     model = get_resnet_adapted(hparams)
                 print(f"-----------------------------------------------------------{run_model} "
@@ -332,6 +397,17 @@ if __name__ == '__main__':
                 print({h.name: hparams[h] for h in hparams})
                 # Stop training when there is no improvement in the validation loss for 5 consecutive epochs
                 early_stopping = EarlyStopping(monitor='val_loss', patience=5)
+
+
+                # callable_test = TestCallback(test_batches)
+                # history = model.fit(train_batches,
+                #                     epochs=EPOCHS,
+                #                     validation_data=validation_batches,
+                #                     callbacks=[early_stopping, callable_test])
+                # loss_test, acc_test = model.evaluate(test_batches)
+                # str_loss_acc = "SN_{:.1f}_loss_{:.3f}_acc_{:.3f}".format(session_num, loss_test, acc_test)
+                # plot(run_model, history, callable_test.history_test, str_loss_acc)
+
 
                 callable_test = TestCallback((X_test, y_test))
                 history = model.fit(generate_data(X_train, y_train, BATCH_SIZE),
