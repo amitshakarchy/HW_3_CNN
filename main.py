@@ -11,7 +11,8 @@ import scipy.io
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
 # from tensorflow.keras.preprocessing import image_dataset_from_directory
-import tensorflow.keras.datasets as tfds
+# import tensorflow.keras.datasets as tfds
+import tensorflow_datasets as tfds
 import os
 import sys
 import glob
@@ -132,6 +133,45 @@ def load_data(random_split=True):
     return X_train, y_train, X_val, y_val, X_test, y_test
 
 
+def data():
+    dataset, dataset_info = tfds.load('oxford_flowers102', with_info=True, as_supervised=True)
+
+    # Create a training set, a validation set and a test set.
+    test_set, training_set, validation_set = dataset['test'], dataset['train'], dataset['validation']
+    num_training_examples = 0
+    num_validation_examples = 0
+    num_test_examples = 0
+
+    for example in training_set:
+        num_training_examples += 1
+
+    for example in validation_set:
+        num_validation_examples += 1
+
+    for example in test_set:
+        num_test_examples += 1
+
+    print('Total Number of Training Images: {}'.format(num_training_examples))
+    print('Total Number of Validation Images: {}'.format(num_validation_examples))
+    print('Total Number of Test Images: {} \n'.format(num_test_examples))
+    # Get the number of classes in the dataset from the dataset info.
+    num_classes = dataset_info.features['label'].num_classes
+    print('Total Number of Classes: {}'.format(num_classes))
+
+    def format_image(image, label):
+        image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE)) / 255.0
+        return image, label
+
+    train_batches = training_set.cache().shuffle(num_training_examples // 4).map(format_image).batch(
+        BATCH_SIZE).prefetch(1)
+
+    validation_batches = validation_set.cache().map(format_image).batch(BATCH_SIZE).prefetch(1)
+
+    test_batches = test_set.cache().map(format_image).batch(BATCH_SIZE).prefetch(1)
+
+    return train_batches, validation_batches, test_batches
+
+
 def process_image(img):
     def image_center_crop(img):
         """
@@ -186,6 +226,7 @@ def test_generate(file_list, label):
     images = np.stack(images, axis=0)
     labels = tf.keras.utils.to_categorical(label, N_CLASSES)
     return images, labels
+
 
 def display_flower(images_list, labels, flower_ind):
     import matplotlib.pyplot as plt
@@ -251,15 +292,17 @@ def get_mobilenet_v2_adapted(hparams):
 def get_inceptionv3_adapted(hparams):
     input_tensor = Input(shape=(IMG_SIZE, IMG_SIZE, 3))
     base_model = InceptionV3(include_top=False,
-                   weights='imagenet',
-                   input_shape=(IMG_SIZE, IMG_SIZE, 3))
+                             weights='imagenet',
+                             input_shape=(IMG_SIZE, IMG_SIZE, 3))
     bn = BatchNormalization()(input_tensor)
     x = base_model(bn)
     x = GlobalAveragePooling2D()(x)
-    x = Dropout(0.5)(x)
+    x = Dense(hparams[HP_NUM_UNITS], activation='relu')(x)
+    x = Dropout(hparams[HP_DROPOUT])(x)
     output = Dense(N_CLASSES, activation='softmax')(x)
     model = Model(input_tensor, output)
     return model
+
 
 # Implementation base on https://github.com/keras-team/keras/issues/2548
 class TestCallback(Callback):
@@ -302,15 +345,16 @@ def plot(name_model, history, history_test, session_num):
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     print("Let's go!")
-    download_data()
+    # download_data()
+
     # we will crop and resize input images to IMG_SIZE x IMG_SIZE
     N_CLASSES = 102
     IMG_SIZE = 224
     BATCH_SIZE = 32
     # TODO: change for experiments
     SEED = 42
-    EPOCHS = 100
-    run_model = 'feature_vector'
+    EPOCHS = 2
+    run_model = 'inceptionv3'
     normalization = False
     crop = True
 
@@ -321,8 +365,10 @@ if __name__ == '__main__':
     INPUT_SHAPE = Input(shape=(IMG_SIZE, IMG_SIZE, 3))
 
     X_train, y_train, X_val, y_val, X_test, y_test = load_data(random_split=True)
-
+    #
     X_test, y_test = test_generate(X_test, y_test)
+
+    # train_batches, validation_batches, test_batches = data()
     session_num = 0
 
     for num_units in HP_NUM_UNITS.domain.values:
@@ -352,6 +398,17 @@ if __name__ == '__main__':
                 # Stop training when there is no improvement in the validation loss for 5 consecutive epochs
                 early_stopping = EarlyStopping(monitor='val_loss', patience=5)
 
+
+                # callable_test = TestCallback(test_batches)
+                # history = model.fit(train_batches,
+                #                     epochs=EPOCHS,
+                #                     validation_data=validation_batches,
+                #                     callbacks=[early_stopping, callable_test])
+                # loss_test, acc_test = model.evaluate(test_batches)
+                # str_loss_acc = "SN_{:.1f}_loss_{:.3f}_acc_{:.3f}".format(session_num, loss_test, acc_test)
+                # plot(run_model, history, callable_test.history_test, str_loss_acc)
+
+
                 callable_test = TestCallback((X_test, y_test))
                 history = model.fit(generate_data(X_train, y_train, BATCH_SIZE),
                                     steps_per_epoch=X_train.shape[0] // BATCH_SIZE,
@@ -364,8 +421,6 @@ if __name__ == '__main__':
                 plot(run_model, history, callable_test.history_test, str_loss_acc)
 
                 session_num += 1
-
-
 
 # TODO:
 #   1. pre processing
