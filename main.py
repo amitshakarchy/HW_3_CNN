@@ -84,11 +84,11 @@ def download_data():
 
 def load_data(random_split=True):
     # Read .mat file containing image labels.
-    image_labels = loadmat('data/imagelabels.mat')['labels'][0]
+    image_labels = loadmat('HW_3_CNN/data/imagelabels.mat')['labels'][0]
     # Subtract one to get 0-based labels
     image_labels -= 1
 
-    all_files = sorted(glob.glob('data/jpg/*.jpg'))
+    all_files = sorted(glob.glob('HW_3_CNN/data/jpg/*.jpg'))
     # fix path's backslashes
     for ind, file in enumerate(all_files):
         all_files[ind] = file.replace('\\', '/')
@@ -104,7 +104,7 @@ def load_data(random_split=True):
 
     else:
         # Read .mat file containing training, testing, and validation sets.
-        setid = loadmat('data/setid.mat')
+        setid = loadmat('HW_3_CNN/data/setid.mat')
 
         # The .mat file is 1-indexed, so we subtract one to get 0-based labels
         idx_train = setid['trnid'][0] - 1
@@ -260,7 +260,7 @@ class TestCallback(Callback):
 
 
 def plot(name_model, history, history_test, session_num):
-    epochs_range = range(EPOCHS)
+    epochs_range = range(len(history.history['accuracy']))
     plt.figure(figsize=(8, 8))
     plt.subplot(1, 2, 1)
     plt.plot(epochs_range, history.history['accuracy'], label='Training Accuracy')
@@ -275,9 +275,9 @@ def plot(name_model, history, history_test, session_num):
     plt.plot(epochs_range, history_test['test_loss'], label='Test Loss')
     plt.legend(loc='upper right')
     plt.title('Training and Validation Loss')
-    if not os.path.exists('data/' + name_model):
-        os.mkdir('data/' + name_model)
-    plt.savefig('data/' + name_model + '/' + str(session_num) + '.png')
+    if not os.path.exists('HW_3_CNN/data/' + name_model):
+        os.mkdir('HW_3_CNN/data/' + name_model)
+    plt.savefig('HW_3_CNN/data/' + name_model + '/' + str(session_num) + '.png')
 
     plt.show()
 
@@ -294,8 +294,8 @@ if __name__ == '__main__':
     SEED = 42
     EPOCHS = 100
     run_model = 'feature_vector'
-    normalization = False
-    crop = True
+    normalization = True
+    crop = False
 
     HP_NUM_UNITS = hp.HParam('num_units', hp.Discrete([128, 256, 1024]))
     HP_DROPOUT = hp.HParam('dropout', hp.Discrete([0.0, 0.3]))
@@ -345,8 +345,6 @@ if __name__ == '__main__':
                 plot(run_model, history, callable_test.history_test, str_loss_acc)
 
                 session_num += 1
-
-
 
 # TODO:
 #   1. pre processing
