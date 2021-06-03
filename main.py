@@ -1,11 +1,12 @@
 from random import random
 
-from cv2 import cv2
+# from cv2 import cv2
+from keras.layers import BatchNormalization
 from sklearn import metrics
 from sklearn.metrics import confusion_matrix
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Flatten
-# import cv2
+import cv2
 import scipy.io
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
@@ -23,6 +24,7 @@ from urllib.request import urlopen
 from shutil import copyfileobj
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.python.keras import Input
+from tensorflow.python.keras.applications.inception_v3 import InceptionV3
 from tensorflow.python.keras.applications.resnet import ResNet50
 from tensorflow.python.keras.applications.vgg16 import VGG16
 from tensorflow.keras import layers
@@ -31,7 +33,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from tensorflow.python.keras.callbacks import Callback
 from tensorboard.plugins.hparams import api as hp
-from tensorflow.python.keras.layers import Dropout
+from tensorflow.python.keras.layers import Dropout, GlobalAveragePooling2D
 
 labels_names = ['pink primrose', 'hard-leaved pocket orchid', 'canterbury bells', 'sweet pea', 'english marigold',
                 'tiger lily', 'moon orchid', 'bird of paradise', 'monkshood', 'globe thistle', 'snapdragon',
@@ -185,7 +187,6 @@ def test_generate(file_list, label):
     labels = tf.keras.utils.to_categorical(label, N_CLASSES)
     return images, labels
 
-
 def display_flower(images_list, labels, flower_ind):
     import matplotlib.pyplot as plt
     image = cv2.imread(images_list[flower_ind])
@@ -207,6 +208,7 @@ def get_vgg_adapted(hparams):
     # define new model
     model = Model(inputs=feature_extractor.inputs, outputs=output)
     # summarize
+    model.build()
     model.summary()
     return model
 
@@ -234,6 +236,7 @@ def get_mobilenet_v2_adapted(hparams):
     feature_extractor = hub.KerasLayer(URL, input_shape=(IMG_SIZE, IMG_SIZE, 3))
     # Freeze the Pre-Trained Model
     feature_extractor.trainable = False
+
     # Attach a classification head
     model = tf.keras.Sequential([
         feature_extractor,
@@ -241,8 +244,22 @@ def get_mobilenet_v2_adapted(hparams):
         Dropout(hparams[HP_DROPOUT]),
         layers.Dense(N_CLASSES, activation='softmax')
     ])
+
     return model
 
+
+def get_inceptionv3_adapted(hparams):
+    input_tensor = Input(shape=(IMG_SIZE, IMG_SIZE, 3))
+    base_model = InceptionV3(include_top=False,
+                   weights='imagenet',
+                   input_shape=(IMG_SIZE, IMG_SIZE, 3))
+    bn = BatchNormalization()(input_tensor)
+    x = base_model(bn)
+    x = GlobalAveragePooling2D()(x)
+    x = Dropout(0.5)(x)
+    output = Dense(N_CLASSES, activation='softmax')(x)
+    model = Model(input_tensor, output)
+    return model
 
 # Implementation base on https://github.com/keras-team/keras/issues/2548
 class TestCallback(Callback):
@@ -260,7 +277,7 @@ class TestCallback(Callback):
 
 
 def plot(name_model, history, history_test, session_num):
-    epochs_range = range(EPOCHS)
+    epochs_range = range(len(history.history['accuracy']))
     plt.figure(figsize=(8, 8))
     plt.subplot(1, 2, 1)
     plt.plot(epochs_range, history.history['accuracy'], label='Training Accuracy')
@@ -320,6 +337,8 @@ if __name__ == '__main__':
                     model = get_vgg_adapted(hparams)
                 elif run_model == 'feature_vector':
                     model = get_mobilenet_v2_adapted(hparams)
+                elif run_model == 'inceptionv3':
+                    model = get_inceptionv3_adapted(hparams)
                 else:  # 'resnet'
                     model = get_resnet_adapted(hparams)
                 print(f"-----------------------------------------------------------{run_model} "
